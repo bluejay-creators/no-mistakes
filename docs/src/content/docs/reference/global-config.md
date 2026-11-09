@@ -247,9 +247,12 @@ agent_config:
     model: openai/gpt-5
   cursor:
     model: gpt-5
+  "acp:omp":
+    model: example-model
+    effort: high
 ```
 
-`effort` is one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The value is passed to the harness as written, so a level that harness does not implement is rejected by the harness itself rather than silently downgraded.
+`effort` is one of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The value is passed to the harness as written, so a level that harness does not implement is rejected by the harness itself rather than silently downgraded. `acp:omp` additionally accepts `off` and `auto`; its complete vocabulary is checked at config load.
 
 How each field maps:
 
@@ -261,13 +264,21 @@ How each field maps:
 | `copilot`         | `--model`                                     | `--effort`                        | `minimal`, `low`, `medium`, `high`, `xhigh`, `max`  |
 | `pi`              | `--model`                                     | `--thinking`                      | `minimal`, `low`, `medium`, `high`, `xhigh`, `max`  |
 | `opencode`        | session-message `model` (needs `provider/model`) | session-message `variant`      | provider-specific                                   |
-| `cursor`, `devin`, `acp:*` | `acpx --model`                       | not expressible                   | -                                                   |
+| `acp:omp`         | `acpx --model`                                | generated `omp acp … --thinking`   | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `auto` |
+| `cursor`, `devin`, other `acp:*` | `acpx --model`                 | not expressible                   | -                                                   |
 | `rovodev`         | not expressible                               | not expressible                   | -                                                   |
 | `antigravity`     | not expressible                               | not expressible                   | -                                                   |
 
 `opencode` needs the `provider/model` form (for example `openai/gpt-5`) because its session API takes the provider and the model as separate fields; a bare model name is refused at config load rather than dropped. Both of its knobs travel in the session message, not in the launch command, because `opencode serve` exits with usage on an unknown flag.
 
-`rovodev` and `antigravity` have no mechanism no-mistakes can set - `acli rovodev serve` plus its REST session API take no model parameter, and the `agy` CLI parses flags strictly - so `agent_config` for them is a config error rather than a request that quietly does nothing. Reach for [`agent_args_override`](#agent_args_override) there if your build of the CLI accepts a flag. Reasoning effort is likewise unavailable for ACP targets: no-mistakes drives them through `acpx`, which exposes `--model` but no effort surface. acpx also accepts only the model ids a target advertises over ACP; for `devin` that is a subset of `devin models list`, and [`acp_registry_overrides`](#acp_registry_overrides) is the escape hatch for the rest.
+For `acp:omp`, effort is appended only to no-mistakes' internally generated neutralized command under `disable_project_settings: true`:
+`omp acp --config <owned-suppression-overlay> --no-rules --no-skills --no-extensions --thinking <effort>`.
+The suppression overlay and flags remain in effect, so setting effort does not invalidate gate neutralization.
+Without the project-settings opt-out, no generated command is used and this effort setting is not applied.
+An `acp_registry_overrides.omp` command is left unchanged, receives no configured effort, and still fails the neutralization gate under the opt-out.
+Model selection remains `acpx --model <model>` outside the target command, as for other ACP agents.
+
+`rovodev` and `antigravity` have no mechanism no-mistakes can set - `acli rovodev serve` plus its REST session API take no model parameter, and the `agy` CLI parses flags strictly - so `agent_config` for them is a config error rather than a request that quietly does nothing. Reach for [`agent_args_override`](#agent_args_override) there if your build of the CLI accepts a flag. Reasoning effort is likewise unavailable for ACP targets other than the generated neutralized `acp:omp` launch described above: no-mistakes drives them through `acpx`, which exposes `--model` but no effort surface. acpx also accepts only the model ids a target advertises over ACP; for `devin` that is a subset of `devin models list`, and [`acp_registry_overrides`](#acp_registry_overrides) is the escape hatch for the rest.
 
 `agent_config` is global-only. Like `agent_args_override`, it decides which model runs with your credentials, so an `agent_config` block in a repository's `.no-mistakes.yaml` is ignored. For first-class ACP aliases, `cursor` and `acp:cursor` share a profile, as do `devin` and `acp:devin`: the selected spelling's entry wins when both are configured; otherwise the other spelling's entry applies. This also applies to review-agent profiles.
 

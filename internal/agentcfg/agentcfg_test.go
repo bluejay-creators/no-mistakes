@@ -291,6 +291,30 @@ func TestParseEffort(t *testing.T) {
 	}
 }
 
+func TestOMPEffortMappingIsTargetCommandOnly(t *testing.T) {
+	for _, effort := range []Effort{"off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"} {
+		profile := Profile{Model: "example-model", Effort: effort}
+		if err := Validate("acp:omp", profile); err != nil {
+			t.Fatalf("Validate(acp:omp, %q): %v", effort, err)
+		}
+		if got := MechanismFor("acp:omp", KnobEffort); got != MechanismRequest {
+			t.Fatalf("OMP effort mechanism = %q, want target-command mapping", got)
+		}
+		// Never emit --thinking among acpx's own arguments; model is unchanged.
+		if got := NativeArgs("acp:omp", profile, nil); !reflect.DeepEqual(got, []string{"--model", "example-model"}) {
+			t.Fatalf("OMP native args = %q", got)
+		}
+	}
+	if err := Validate("acp:omp", Profile{Effort: "turbo"}); err == nil {
+		t.Fatal("OMP must reject unknown effort")
+	}
+	for _, name := range []types.AgentName{"acp:gemini", types.AgentCursor, types.AgentDevin} {
+		if err := Validate(name, Profile{Effort: EffortHigh}); err == nil {
+			t.Fatalf("%s must still reject effort", name)
+		}
+	}
+}
+
 func TestSplitProviderModel(t *testing.T) {
 	provider, id, ok := SplitProviderModel("openai/gpt-5")
 	if !ok || provider != "openai" || id != "gpt-5" {

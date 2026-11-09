@@ -29,13 +29,10 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
-// Effort is the harness-neutral reasoning-depth knob. The vocabulary is the
-// union of what the supported harnesses accept; values pass through to the
-// harness verbatim (codex wraps its value in the `-c` config form). Restricting
-// it to this set catches typos at config-load time, while deliberately NOT
-// gating per-harness value ranges: those drift with every CLI release, and a
-// stale table that refuses a newly valid level is worse than the harness
-// reporting the level it does not know. Per-harness ranges are documented in
+// Effort is the harness-neutral reasoning-depth knob. The common vocabulary
+// passes through verbatim (codex wraps its value in the `-c` config form).
+// ParseEffortFor also accepts OMP's off/auto modes without widening other
+// harnesses' vocabulary. Per-harness ranges are documented in
 // docs/src/content/docs/reference/global-config.md.
 type Effort string
 
@@ -79,6 +76,22 @@ func ParseEffort(raw string) (Effort, error) {
 		}
 	}
 	return "", fmt.Errorf("invalid effort %q (valid: %s)", raw, strings.Join(EffortNames(), ", "))
+}
+
+// ParseEffortFor validates effort against the named harness's vocabulary.
+// OMP's --thinking also accepts off and auto; those are not generic effort
+// levels and must not become valid for other harnesses.
+func ParseEffortFor(name types.AgentName, raw string) (Effort, error) {
+	if name != "acp:omp" {
+		return ParseEffort(raw)
+	}
+	value := strings.TrimSpace(raw)
+	switch value {
+	case "", "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto":
+		return Effort(value), nil
+	default:
+		return "", fmt.Errorf("invalid effort %q for acp:omp (valid: off, minimal, low, medium, high, xhigh, max, auto)", raw)
+	}
 }
 
 // Profile is the harness-neutral tuning surface: what the operator asked for,
@@ -126,10 +139,9 @@ const (
 	// MechanismArgs means no-mistakes injects native CLI flags into the argv
 	// it already builds for that harness.
 	MechanismArgs Mechanism = "args"
-	// MechanismRequest means the adapter carries the value in its own
-	// protocol rather than in argv, because the launch command cannot express
-	// it (opencode runs as `opencode serve`, which rejects model flags; the
-	// knob belongs to the session message body).
+	// MechanismRequest means the adapter carries the value outside its own
+	// argv: in a protocol request (opencode's session model/variant) or in the
+	// internally generated target command (acp:omp's --thinking).
 	MechanismRequest Mechanism = "request"
 )
 
@@ -290,14 +302,20 @@ var harnesses = map[types.AgentName]harness{
 // acpHarness covers every ACP-driven name: the first-class aliases (cursor, devin) and
 // explicit acp:<target> spellings. no-mistakes never speaks ACP itself; it
 // shells out to acpx, whose own `--model <id>` is therefore the model
-// mechanism. acpx exposes no reasoning-effort surface, so effort stays
-// unmappable for ACP targets - deliberately refused rather than dropped.
+// mechanism. acpx exposes no reasoning-effort surface; only omp has a verified
+// target-command mechanism, used inside its generated neutralized launch.
 var acpHarness = harness{
 	model:  knob{mechanism: MechanismArgs, args: flagArgs("--model")},
 	effort: unsupported(),
 }
 
 func lookup(name types.AgentName) (harness, bool) {
+	if name == "acp:omp" {
+		return harness{
+			model:  acpHarness.model,
+			effort: knob{mechanism: MechanismRequest},
+		}, true
+	}
 	if _, ok := types.ACPTargetFor(name); ok {
 		return acpHarness, true
 	}
@@ -352,7 +370,7 @@ func Validate(name types.AgentName, p Profile) error {
 		return fmt.Errorf("unknown agent %q", name)
 	}
 	if p.Effort != "" {
-		if _, err := ParseEffort(string(p.Effort)); err != nil {
+		if _, err := ParseEffortFor(name, string(p.Effort)); err != nil {
 			return err
 		}
 	}

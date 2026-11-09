@@ -1748,7 +1748,7 @@ func parseAgentConfig(raw map[string]agentProfileRaw) (map[string]agentcfg.Profi
 		if !agentcfg.Known(agentName) {
 			return nil, fmt.Errorf("invalid agent name in agent_config: %q (valid: %s, cursor, devin, acp:<target>)", name, strings.Join(agentNamesText(agentcfg.Agents()), ", "))
 		}
-		effort, err := agentcfg.ParseEffort(entry.Effort)
+		effort, err := agentcfg.ParseEffortFor(agentName, entry.Effort)
 		if err != nil {
 			return nil, fmt.Errorf("invalid agent_config.%s: %w", name, err)
 		}
