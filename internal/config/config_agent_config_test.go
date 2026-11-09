@@ -96,6 +96,40 @@ func TestLoadGlobal_AgentConfigAcceptsExplicitACPTarget(t *testing.T) {
 	}
 }
 
+func TestLoadGlobal_AgentConfigOMPEffort(t *testing.T) {
+	for _, effort := range []string{"off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"} {
+		t.Run(effort, func(t *testing.T) {
+			cfg := writeGlobalConfig(t, "agent_config:\n  acp:omp:\n    model: example-model\n    effort: "+effort+"\n")
+			want := agentcfg.Profile{Model: "example-model", Effort: agentcfg.Effort(effort)}
+			if got := cfg.AgentConfig["acp:omp"]; got != want {
+				t.Fatalf("OMP profile = %#v, want %#v", got, want)
+			}
+		})
+	}
+	for _, effort := range []string{"turbo", "HIGH", "high --no-rules"} {
+		err := loadGlobalConfigError(t, "agent_config:\n  acp:omp:\n    effort: "+effort+"\n")
+		for _, want := range []string{"agent_config.acp:omp", "invalid effort", "off, minimal, low, medium, high, xhigh, max, auto"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+		}
+	}
+	// OMP's additional levels do not widen any other harness's vocabulary,
+	// and other ACP targets still cannot express even generic effort levels.
+	for _, name := range []string{"codex", "pi", "acp:gemini", "cursor", "devin"} {
+		for _, effort := range []string{"off", "auto"} {
+			err := loadGlobalConfigError(t, "agent_config:\n  "+name+":\n    effort: "+effort+"\n")
+			if !strings.Contains(err.Error(), "invalid effort") {
+				t.Fatalf("%s: error = %v, want invalid effort", name, err)
+			}
+		}
+	}
+	err := loadGlobalConfigError(t, "agent_config:\n  acp:gemini:\n    effort: high\n")
+	if !strings.Contains(err.Error(), "cannot express effort") {
+		t.Fatalf("other ACP effort error = %v", err)
+	}
+}
+
 // TestLoadGlobal_AgentConfigAbsentIsZero is the backwards-compatibility floor:
 // a config that predates agent_config resolves every agent to the zero Profile,
 // which changes no argv anywhere.
