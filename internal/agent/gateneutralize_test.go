@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kunchenguid/no-mistakes/internal/agentcfg"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -229,6 +230,85 @@ func TestNeutralizesGateInstructions_OMPTargetUnderOptOut(t *testing.T) {
 	}
 	if err := EnsureGateNeutralized(overridden); err == nil {
 		t.Error("acp:omp with an override must be refused by the gate under the opt-out")
+	}
+}
+
+func TestOMPGateNeutralization_EffortOnlyInGeneratedCommand(t *testing.T) {
+	for _, effort := range []agentcfg.Effort{"", "off", "minimal", "low", "medium", "high", "xhigh", "max", "auto"} {
+		t.Run("effort="+string(effort), func(t *testing.T) {
+			created, err := NewWithOptions("acp:omp", "acpx", nil, Options{
+				DisableProjectSettings: true,
+				Profile:                agentcfg.Profile{Model: "example-model", Effort: effort},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			omp := created.(*acpxAgent)
+			t.Cleanup(func() { _ = omp.Close() })
+			if err := EnsureGateNeutralized(omp); err != nil {
+				t.Fatalf("effort must preserve the neutralization proof: %v", err)
+			}
+			command, err := omp.resolveRawCommand()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Keep the legacy command byte-identical when effort is absent.
+			want := "omp acp --config " + omp.overlayPath + " --no-rules --no-skills --no-extensions"
+			if effort != "" {
+				want += " --thinking " + string(effort)
+			}
+			if command != want {
+				t.Fatalf("command = %q, want %q", command, want)
+			}
+			again, err := omp.resolveRawCommand()
+			if err != nil || again != want {
+				t.Fatalf("repeated resolution = %q, %v; want %q", again, err, want)
+			}
+			overlay, err := os.ReadFile(omp.overlayPath)
+			if err != nil || string(overlay) != ompGateOverlayYAML {
+				t.Fatalf("suppression overlay changed: %q, %v", overlay, err)
+			}
+			// Model still belongs to acpx itself, not the OMP raw command.
+			args := omp.buildArgs(command, RunOpts{})
+			wantArgs := []string{"--agent", command, "--format", "json", "--json-strict", "--approve-all",
+				"--non-interactive-permissions", "deny", "--suppress-reads", "--model", "example-model", "exec", "--file", "-"}
+			if strings.Join(args, "\x00") != strings.Join(wantArgs, "\x00") {
+				t.Fatalf("acpx args = %q, want %q", args, wantArgs)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name     types.AgentName
+		optOut   bool
+		override string
+		effort   agentcfg.Effort
+	}{
+		{"acp:omp", true, "omp acp --thinking low", "high"},
+		{"acp:omp", false, "", "high"},
+		{"acp:gemini", true, "", ""},
+		{"acp:gemini", true, "gemini --acp", ""},
+	} {
+		t.Run(string(tc.name)+"/override="+tc.override, func(t *testing.T) {
+			target, _ := types.ACPTargetFor(tc.name)
+			created, err := NewWithOptions(tc.name, "acpx", nil, Options{
+				DisableProjectSettings: tc.optOut,
+				ACPRegistryOverrides:   map[string]string{target: tc.override},
+				Profile:                agentcfg.Profile{Effort: tc.effort},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := created.(*acpxAgent)
+			t.Cleanup(func() { _ = a.Close() })
+			if err := EnsureGateNeutralized(a); err == nil {
+				t.Fatal("non-neutralized launch must still fail the gate")
+			}
+			command, err := a.resolveRawCommand()
+			if err != nil || command != tc.override || a.overlayPath != "" {
+				t.Fatalf("non-generated launch changed: command=%q overlay=%q err=%v", command, a.overlayPath, err)
+			}
+		})
 	}
 }
 

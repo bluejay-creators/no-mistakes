@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kunchenguid/no-mistakes/internal/agentcfg"
 	"github.com/kunchenguid/no-mistakes/internal/shellenv"
 )
 
@@ -26,6 +27,9 @@ type acpxAgent struct {
 	// mechanism that reaches the target agent; empty leaves the target on its
 	// configured default, exactly as before the common layer existed.
 	model string
+	// effort reaches only the internally generated neutralized OMP command,
+	// never acpx's own argv or an operator's raw command override.
+	effort agentcfg.Effort
 	// disableProjectSettings is the resolved, trusted-only opt-out. For the omp
 	// target it switches the launch to a neutralized `omp acp` command (see
 	// ompgate.go); other targets ignore it and are refused by
@@ -152,7 +156,11 @@ func (a *acpxAgent) resolveRawCommand() (string, error) {
 	if a.overlayErr != nil {
 		return "", a.overlayErr
 	}
-	return ompNeutralizedACPCommand(a.overlayPath), nil
+	command := ompNeutralizedACPCommand(a.overlayPath)
+	if a.effort != "" {
+		command += " --thinking " + string(a.effort)
+	}
+	return command, nil
 }
 
 func (a *acpxAgent) buildArgs(rawCommand string, opts RunOpts) []string {
